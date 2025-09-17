@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Transparent hijack launcher: binds proxy on 11434 and runs real Ollama on 11435 for this session only.
+# No global exports. When this exits, the temporary ollama serve is killed.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="$SCRIPT_DIR/.venv/bin/python"
+
+LISTEN_HOST="127.0.0.1"
+PROXY_PORT=11434      # hijack the default port so 'ollama run' needs no env vars
+UPSTREAM_PORT=11435   # real ollama runs here only while this is active
+
+# 1) Ensure 11434 is free, otherwise we cannot transparently hijack
+if lsof -iTCP:${PROXY_PORT} -sTCP:LISTEN -Pn >/dev/null 2>&1; then
+  echo "[excretions] Port ${PROXY_PORT} is already in use. Transparent hijack requires it to be free."
+  echo "[excretions] Stop your existing Ollama on 11434 and run this again."
+  echo "[excretions] (Alternatively, use your non-hijack flow: OLLAMA_HOST=http://127.0.0.1:11435 ollama run <model>)"
+  exit 2
+fi
+
+# 2) Start a temporary Ollama server on 11435
+echo "[excretions] Starting temporary ollama serve on ${LISTEN_HOST}:${UPSTREAM_PORT} ..."
+nohup ollama serve --host "${LISTEN_HOST}" --port "${UPSTREAM_PORT}" >/tmp/ollama-serve-11435.log 2>&1 &
+BACK_PID=$!
+
+# wait a moment for it to come up
+for i in $(seq 1 20); do
+  sleep 0.25
+  if curl -s "http://${LISTEN_HOST}:${UPSTREAM_PORT}/" >/dev/null 2>&1; then
+    echo "[excretions] Temporary ollama is up."
+    break
+  fi
+done
+
+# cleanup on exit
+cleanup() {
+  echo "[excretions] Stopping temporary ollama (pid ${BACK_PID}) ..."
+  kill "${BACK_PID}" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+# 3) Run the proxy/speaker on 11434, pointing upstream to 11435. GUI enabled by default.
+echo "[excretions] Launching proxy on ${LISTEN_HOST}:${PROXY_PORT}, upstream http://${LISTEN_HOST}:${UPSTREAM_PORT}"
+exec "$PY" "$SCRIPT_DIR/ollama_excretions_speaker.py"   --engine kokoro   --listen "${LISTEN_HOST}:${PROXY_PORT}"   --upstream "http://${LISTEN_HOST}:${UPSTREAM_PORT}"   --gui

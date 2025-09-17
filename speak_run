@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# speak_run - start speaker proxy if needed, then run ollama via the proxy for this run only
+# Usage:
+#   ./speak_run gemma3:4b-it-qat [--extra-ollama-args ...]
+#
+# Behavior:
+# - If speaker already listening on 127.0.0.1:11435 -> reuse it
+# - Else starts the existing kokoro_excretion launcher in background
+# - Waits for the proxy to be healthy
+# - Runs ollama run with OLLAMA_HOST set only for that subprocess
+# - Leaves the proxy running (so you can keep it open); if you want it killed after run, pass --stop-proxy
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROXY_URL="http://127.0.0.1:11435"
+CHECK_ENDPOINT="${PROXY_URL}/"   # our speaker root responds with {"ok":...}
+LAUNCHER="$SCRIPT_DIR/kokoro_excretion"
+# optional flag to stop proxy after run
+STOP_AFTER_RUN=0
+# collect arguments for ollama run
+OLLAMA_ARGS=()
+
+for a in "$@"; do
+  if [[ "$a" == "--stop-proxy" ]]; then
+    STOP_AFTER_RUN=1
+  else
+    OLLAMA_ARGS+=("$a")
+  fi
+done
+
+# Function: check proxy health
+check_proxy() {
+  curl -s --max-time 2 "$CHECK_ENDPOINT" >/dev/null 2>&1
+  return $?
+}
+
+# If no model arg given, error
+if [[ ${#OLLAMA_ARGS[@]} -eq 0 ]]; then
+  echo "Usage: $0 <model:tag> [--stop-proxy] [extra ollama run args]"
+  exit 2
+fi
+
+# Start proxy if not running
+if ! check_proxy; then
+  echo "[speak_run] Proxy not responding on $PROXY_URL — starting it..."
+  # start launcher in background (it should start uvicorn on 11435)
+  nohup "$LAUNCHER" >/tmp/speaker.log 2>&1 &
+  PROXY_PID=$!
+  # wait for it to come up (10s timeout)
+  for i in $(seq 1 20); do
+    sleep 0.5
+    if check_proxy; then
+      echo "[speak_run] Proxy is up."
+      break
+    fi
+  done
+  if ! check_proxy; then
+    echo "[speak_run] Proxy failed to start. Check /tmp/speaker.log"
+    wait $PROXY_PID 2>/dev/null || true
+    exit 1
+  fi
+else
+  echo "[speak_run] Proxy already running at $PROXY_URL"
+fi
+
+# Now run ollama via proxy for this subprocess only
+export OLLAMA_HOST="$PROXY_URL"
+echo "[speak_run] Running: OLLAMA_HOST=$OLLAMA_HOST ollama run ${OLLAMA_ARGS[*]}"
+ollama run "${OLLAMA_ARGS[@]}"
+
+RC=$?
+
+if [[ $STOP_AFTER_RUN -eq 1 ]]; then
+  echo "[speak_run] Stop-after-run requested: attempting to kill proxy..."
+  # naive kill by PID found via lsof
+  PID="$(lsof -iTCP:11435 -sTCP:LISTEN -t 2>/dev/null || true)"
+  if [[ -n "$PID" ]]; then
+    kill "$PID" && echo "[speak_run] Killed proxy pid $PID"
+  else
+    echo "[speak_run] Could not find proxy PID to kill (it may be managed differently)."
+  fi
+fi
+
+exit $RC

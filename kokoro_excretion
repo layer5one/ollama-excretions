@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+python3 "$(dirname "$0")/ollama_excretions_speaker.py" \
+  --engine kokoro \
+  --listen 127.0.0.1:11435 \
+  --gui \
+  --upstream http://127.0.0.1:11434 "$@"

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"$SCRIPT_DIR/.venv/bin/python" "$SCRIPT_DIR/ollama_excretions_speaker.py" \
+  --engine kitten-nano \
+  --gui \
+  "$@"
