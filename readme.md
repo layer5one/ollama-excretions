@@ -85,7 +85,6 @@ export OLLAMA_HOST=http://<box>:11435
 # or hardcode the base URL in your tool configs
 ```
 
-Everything that streams from `/api/chat` or `/api/generate` will be spoken while it prints.
 
 ---
 
