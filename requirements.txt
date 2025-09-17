@@ -1,3 +1,3 @@
 fastapi uvicorn httpx anyio numpy sounddevice sentencepiece
 kokoro-tts           # Kokoro 82M wrapper/CLI lib
-kittentts soundfile  # Kitten TTS (nano/mini) + wav write/play
+kittentts soundfile  # Kitten TTS (nano/mini) + wav write/play, may need portaudio for ARM (sudo apt install portaudio19-dev).
